@@ -1,0 +1,58 @@
+{
+  "name": "Python Stable Env",
+  // 用 Features 安裝指定版 Python
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    }
+  },
+
+  // VS Code 擴充套件與設定，開 Codespace 就自動套用
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Python / Jupyter
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "ms-toolsai.jupyter-keymap",
+        "ms-toolsai.jupyter-renderers",
+        "ms-toolsai.vscode-jupyter-cell-tags",
+        "ms-toolsai.vscode-jupyter-slideshow",
+        "ms-python.black-formatter",
+        "ms-python.isort",
+
+        // 你的前端/檔案格式需求
+        "esbenp.prettier-vscode",
+
+        // 顏色主題與圖示（可選）
+        "monokai.theme-monokai-pro-vscode",
+        "pkief.material-icon-theme"
+      ],
+      "settings": {
+        // 既有設定保留
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "python.analysis.typeCheckingMode": "basic",
+        "python.formatting.provider": "black",
+
+        // 避免 Prettier 影響 Python（可選）
+        "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" }
+      }
+    }
+  },
+
+
+  // 第一次建立容器就自動建立 venv 並安裝相依
+  "postCreateCommand": "python -m venv .venv && . .venv/bin/activate && python -m pip install -U pip && if [ -f requirements.txt ]; then pip install -r requirements.txt; fi",
+
+  // 每次啟動容器時可做些輕量檢查/提示（可改掉）
+  "postStartCommand": "if [ -x .venv/bin/python ]; then .venv/bin/python -V; fi",
+
+  // 加速安裝：把 pip cache 存在命名 volume（在重建容器時也能沿用）
+  "mounts": [
+    "source=pip-cache,target=/home/vscode/.cache/pip,type=volume"
+  ],
+
+  "remoteUser": "vscode"
+}
