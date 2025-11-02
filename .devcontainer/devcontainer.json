@@ -1,13 +1,10 @@
 {
   "name": "Python Stable Env",
-  "features": {
-    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" }
-  },
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
 
   "customizations": {
     "vscode": {
       "extensions": [
-        // Python / Jupyter
         "ms-python.python",
         "ms-python.vscode-pylance",
         "ms-toolsai.jupyter",
@@ -17,28 +14,17 @@
         "ms-toolsai.vscode-jupyter-slideshow",
         "ms-python.black-formatter",
         "ms-python.isort",
-
-        // Code Runner（你要的）
         "formulahendry.code-runner",
-
-        // 其他（可選）
         "esbenp.prettier-vscode",
         "monokai.theme-monokai-pro-vscode",
         "pkief.material-icon-theme"
       ],
       "settings": {
-        // 讓 VS Code 預設就使用專案內的虛擬環境
         "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
         "python.analysis.typeCheckingMode": "basic",
-        "python.formatting.provider": "black",
-
-        // Python 檔用 Black（避免被 Prettier 抢走）
+        "python.terminal.activateEnvironment": true,
         "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" },
-
-        // ★ Code Runner 一定用 .venv、在 Terminal 跑、以檔案所在資料夾為工作目錄
-        "code-runner.executorMap": {
-          "python": "${workspaceFolder}/.venv/bin/python -u"
-        },
+        "code-runner.executorMap": { "python": "${workspaceFolder}/.venv/bin/python -u" },
         "code-runner.runInTerminal": true,
         "code-runner.fileDirectoryAsCwd": true,
         "code-runner.ignoreSelection": true,
@@ -47,8 +33,12 @@
     }
   },
 
-  // 可重複的初始化：有就用、沒有就建；並裝依賴與 Jupyter kernel
-  "postCreateCommand": "if [ ! -d .venv ]; then python -m venv .venv; fi && .venv/bin/python -m pip install -U pip setuptools wheel && if [ -f requirements.lock.txt ]; then .venv/bin/pip install -r requirements.lock.txt; elif [ -f requirements.txt ]; then .venv/bin/pip install -r requirements.txt; fi && .venv/bin/python -m pip install -q ipykernel && .venv/bin/python -m ipykernel install --user --name=${PWD##*/}-venv --display-name \"Python (.venv)\"",
+  "containerEnv": { "PIP_CACHE_DIR": "/home/vscode/.cache/pip" },
+
+  // （可選）若你已經在用 prebuild，把安裝移到 updateContent/onCreate，否則保留你原本的 postCreate 也可以
+  "onCreateCommand": "if [ ! -d .venv ]; then python -m venv .venv; fi",
+  "updateContentCommand": "bash -lc 'set -e; REQ=; [ -f requirements.lock.txt ] && REQ=requirements.lock.txt || { [ -f requirements.txt ] && REQ=requirements.txt; }; NEW=0; [ ! -d .venv ] && NEW=1; NEED=0; if [ -n \"$REQ\" ]; then NH=$(sha256sum \"$REQ\"|cut -d\" \" -f1); OH=$(cat .venv/.req.hash 2>/dev/null || true); [ \"$NH\" != \"$OH\" ] && NEED=1; fi; if [ $NEW -eq 1 ] || [ $NEED -eq 1 ]; then .venv/bin/python -m pip install -U pip setuptools wheel && [ -n \"$REQ\" ] && .venv/bin/pip install --prefer-binary -r \"$REQ\" && echo \"$NH\" > .venv/.req.hash; fi'",
+  "postCreateCommand": ".venv/bin/python -m pip install -q ipykernel && .venv/bin/python -m ipykernel install --user --name=${PWD##*/}-venv --display-name \"Python (.venv)\"",
 
   "postStartCommand": "if [ -x .venv/bin/python ]; then echo Using: $(.venv/bin/python -c 'import sys;print(sys.executable)'); .venv/bin/python -V; fi",
 
