@@ -37,7 +37,9 @@
         "python.formatting.provider": "black",
 
         // 避免 Prettier 影響 Python（可選）
-        "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" }
+        "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" },      
+        // 若不想再看到建議彈窗，可設：
+        "extensions.ignoreRecommendations": true
       }
     }
   },
