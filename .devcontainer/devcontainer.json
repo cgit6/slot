@@ -1,14 +1,9 @@
 {
   "name": "Python Stable Env",
-  // 用 Features 安裝指定版 Python
   "features": {
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.11"
-    }
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" }
   },
 
-  // VS Code 擴充套件與設定，開 Codespace 就自動套用
-  
   "customizations": {
     "vscode": {
       "extensions": [
@@ -23,35 +18,40 @@
         "ms-python.black-formatter",
         "ms-python.isort",
 
-        // 你的前端/檔案格式需求
-        "esbenp.prettier-vscode",
+        // Code Runner（你要的）
+        "formulahendry.code-runner",
 
-        // 顏色主題與圖示（可選）
+        // 其他（可選）
+        "esbenp.prettier-vscode",
         "monokai.theme-monokai-pro-vscode",
         "pkief.material-icon-theme"
       ],
       "settings": {
-        // 既有設定保留
+        // 讓 VS Code 預設就使用專案內的虛擬環境
         "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
         "python.analysis.typeCheckingMode": "basic",
         "python.formatting.provider": "black",
 
-        // 避免 Prettier 影響 Python（可選）
-        "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" },      
-        // 若不想再看到建議彈窗，可設：
-        "extensions.ignoreRecommendations": true
+        // Python 檔用 Black（避免被 Prettier 抢走）
+        "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" },
+
+        // ★ Code Runner 一定用 .venv、在 Terminal 跑、以檔案所在資料夾為工作目錄
+        "code-runner.executorMap": {
+          "python": "${workspaceFolder}/.venv/bin/python -u"
+        },
+        "code-runner.runInTerminal": true,
+        "code-runner.fileDirectoryAsCwd": true,
+        "code-runner.ignoreSelection": true,
+        "code-runner.saveFileBeforeRun": true
       }
     }
   },
 
+  // 可重複的初始化：有就用、沒有就建；並裝依賴與 Jupyter kernel
+  "postCreateCommand": "if [ ! -d .venv ]; then python -m venv .venv; fi && .venv/bin/python -m pip install -U pip setuptools wheel && if [ -f requirements.lock.txt ]; then .venv/bin/pip install -r requirements.lock.txt; elif [ -f requirements.txt ]; then .venv/bin/pip install -r requirements.txt; fi && .venv/bin/python -m pip install -q ipykernel && .venv/bin/python -m ipykernel install --user --name=${PWD##*/}-venv --display-name \"Python (.venv)\"",
 
-  // 第一次建立容器就自動建立 venv 並安裝相依
-  "postCreateCommand": "python -m venv .venv && . .venv/bin/activate && python -m pip install -U pip && if [ -f requirements.txt ]; then pip install -r requirements.txt; fi",
+  "postStartCommand": "if [ -x .venv/bin/python ]; then echo Using: $(.venv/bin/python -c 'import sys;print(sys.executable)'); .venv/bin/python -V; fi",
 
-  // 每次啟動容器時可做些輕量檢查/提示（可改掉）
-  "postStartCommand": "if [ -x .venv/bin/python ]; then .venv/bin/python -V; fi",
-
-  // 加速安裝：把 pip cache 存在命名 volume（在重建容器時也能沿用）
   "mounts": [
     "source=pip-cache,target=/home/vscode/.cache/pip,type=volume"
   ],
