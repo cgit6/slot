@@ -35,28 +35,13 @@
 
   "containerEnv": { "PIP_CACHE_DIR": "/home/vscode/.cache/pip" },
 
-  // 第一次建置：若有 python 用 python，否則用 python3 建 venv
   "onCreateCommand": "bash -lc 'set -e; PY=$(command -v python || command -v python3); [ -d .venv ] || \"$PY\" -m venv .venv'",
 
-  // Prebuild 也會跑：必要時補建 .venv，並只在需求變更時安裝
-  "updateContentCommand": "bash -lc 'set -e; \
-    REQ=\"\"; [ -f requirements.lock.txt ] && REQ=requirements.lock.txt || { [ -f requirements.txt ] && REQ=requirements.txt; }; \
-    PY=$(command -v python || command -v python3); \
-    [ -d .venv ] || \"$PY\" -m venv .venv; \
-    VENV_PY=.venv/bin/python; [ -x \"$VENV_PY\" ] || VENV_PY=.venv/bin/python3; \
-    NH=\"\"; [ -n \"$REQ\" ] && NH=$(sha256sum \"$REQ\" | cut -d\" \" -f1) || true; \
-    OH=$(cat .venv/.req.hash 2>/dev/null || true); \
-    if [ \"$NH\" != \"$OH\" ]; then \
-      \"$VENV_PY\" -m pip install -U pip setuptools wheel; \
-      [ -n \"$REQ\" ] && \"$VENV_PY\" -m pip install --prefer-binary -r \"$REQ\"; \
-      echo \"$NH\" > .venv/.req.hash; \
-    fi'",
+  "updateContentCommand": "bash -lc 'set -e; REQ=\"\"; [ -f requirements.lock.txt ] && REQ=requirements.lock.txt || { [ -f requirements.txt ] && REQ=requirements.txt; }; PY=$(command -v python || command -v python3); [ -d .venv ] || \"$PY\" -m venv .venv; VENV_PY=.venv/bin/python; [ -x \"$VENV_PY\" ] || VENV_PY=.venv/bin/python3; NH=\"\"; [ -n \"$REQ\" ] && NH=$(sha256sum \"$REQ\" | cut -d\" \" -f1) || true; OH=$(cat .venv/.req.hash 2>/dev/null || true); if [ \"$NH\" != \"$OH\" ]; then \"$VENV_PY\" -m pip install -U pip setuptools wheel; [ -n \"$REQ\" ] && \"$VENV_PY\" -m pip install --prefer-binary -r \"$REQ\"; echo \"$NH\" > .venv/.req.hash; fi'",
 
-  // Codespace 建好後的小步驟（可重複）：註冊 Jupyter kernel
   "postCreateCommand": "bash -lc 'set -e; VENV_PY=.venv/bin/python; [ -x \"$VENV_PY\" ] || VENV_PY=.venv/bin/python3; \"$VENV_PY\" -m pip install -q ipykernel; \"$VENV_PY\" -m ipykernel install --user --name=${PWD##*/}-venv --display-name \"Python (.venv)\"'",
 
-  // 啟動提示（支援 python / python3）
-  "postStartCommand": "if [ -x .venv/bin/python ]; then echo Using: $(.venv/bin/python -c 'import sys;print(sys.executable)'); .venv/bin/python -V; elif [ -x .venv/bin/python3 ]; then echo Using: $(.venv/bin/python3 -c 'import sys;print(sys.executable)'); .venv/bin/python3 -V; fi",
+  "postStartCommand": "bash -lc 'if [ -x .venv/bin/python ]; then echo Using: $(.venv/bin/python -c \"import sys;print(sys.executable)\"); .venv/bin/python -V; elif [ -x .venv/bin/python3 ]; then echo Using: $(.venv/bin/python3 -c \"import sys;print(sys.executable)\"); .venv/bin/python3 -V; fi'",
 
   "mounts": [
     "source=pip-cache,target=/home/vscode/.cache/pip,type=volume"
