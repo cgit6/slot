@@ -1,91 +1,87 @@
-from typing import Optional, List
+import random
 import numpy as np
-from time import time
 
-REELSTRIPS = [
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], # 第一輪
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], # 第二輪
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], # 第三輪
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], # 第四輪
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], # 第五輪
-]
+totaltimes = int(input("请输入模拟次数: "))  # 输入模拟次数
 
-SYMBOLS = ["Z1", "C1", "W1", "H1", "H2", "H3", "H4", "L1", "L2", "L3", "L4", "L5"] # 符號清單
+BET = 1000  # 下注金额
 
+# 符号列表
+Symbols = ["K", "Q", "J"]
 
-class ScreenGenerator:
+# 赔付倍数配置: [五连, 四连, 三连]
+SymbolKOdds = [30, 20, 5]  # 图标 K 赔付倍数配置
+SymbolQOdds = [15, 10, 5]  # 图标 Q 赔付倍数配置
+SymbolJOdds = [15, 10, 5]  # 图标 J 赔付倍数配置
 
-    def __init__(
-        self,
-        rows: int = 3,                                                            # 列數預設 3
-        cols: int = 5,                                                            # 行數預設 5
-        reel_strips: List[List[int]] = REELSTRIPS,                                # 做型別檢查用的必須是 2 維 list
-        symbols: List[str] = SYMBOLS,                                             # 同上
-        seed: Optional[int] = None,                                               # 同上
-    ):
-        self._valid() # 檢查合法性
-        self.Rows = rows                                                          # 列數
-        self.Cols = cols                                                          # 行數
-        self.ScreenSize = rows * cols                                             # 盤面大小
-        self.ReelStrips = np.asarray(reel_strips, dtype=np.uint8)                 # 輪帶表，轉成 np 陣列，型別用 uint8
-        self.ReelLens = np.asarray([len(r) for r in reel_strips], dtype=np.int32) # 每條 reel 的長度
-        self.Symbols = np.asarray(symbols,dtype=str)                              # 符號清單
-        self.ScreenBuf = np.zeros(self.ScreenSize, dtype=np.uint8)                # 一次 spin 的輸出緩衝，初始 0 陣列狀態
-        self.rng = np.random.Generator(np.random.PCG64(seed))                     # numpy 的亂數生成(帶種子固定結果)
-        self._row_offsets = np.arange(rows, dtype=np.int64)                       # 第一列、第二列、第三列
+# 概率配置（万分比）
+SymbolRateK = [3000, 3000, 3000, 3000, 3000]  # 图标 K 概率配置
+SymbolRateQ = [3000, 3000, 3000, 3000, 3000]  # 图标 Q 概率配置
+SymbolRateJ = [4000, 4000, 4000, 4000, 4000]  # 图标 J 概率配置
 
+SymbolOdds = [SymbolKOdds, SymbolQOdds, SymbolJOdds]
 
-    def gen_screen(self) -> np.ndarray:
-        for i in range(self.Cols):
-            reel = self.ReelStrips[i]                                   # 第 i 條輪帶
-            L = reel.size                                               # 第 i 條輪帶的長度
-            idx = self.rng.integers(L)                                  # 生成範圍內的整數隨機值
-            take_idx = (idx + self._row_offsets) % L                    # 重複利用，不再配置
-            start = i * self.Rows                                       # 因為是一維陣列要找存放的起始點
-            self.ScreenBuf[start:start+self.Rows] = reel[take_idx]      # 存放
-        return self.ScreenBuf
+AllRTP = []
 
-    # 檢查合法性
-    def _valid(self) : 
-        # 判斷 rows > 0
-        # 判斷 cols > 0
-        # REELSTRIPS[i].__len__() > rows
-        # REELSTRIPS.__len__() == cols
-        # REELSTRIPS[i][j] > 0 && REELSTRIPS[i][j] < len(symbols)
-        return
-    
-    def view_rows_cols(self) -> np.ndarray:
-        """
-        返回: 形狀 (Rows, Cols) 的視圖（一般視覺化較直觀）。
-        """
-        return self.ScreenBuf.reshape(self.Cols, self.Rows).T
-    
-    def as_symbol_names(self) -> np.ndarray:
-        """
-        返回: 以符號名稱矩陣（Rows x Cols）回傳，方便除錯或輸出。
-        """
-        names = np.asarray(self.Symbols, dtype=object)
-        return names[self.view_rows_cols()]
+for _ in range(10):  # 开始模拟 10 次数据
+    times = totaltimes
+    TotalBet = 0
+    WIN = 0
 
-def runner(rounds: int = 1_000_000, seed : int | None = None) :
-    gener = ScreenGenerator(seed=seed)
-    print(f"running ScreenGenerator : gen {rounds:,d} screens")
-    start = time()
-    for i in range(1,rounds+1) :
-        gener.gen_screen()
-        if i%100000 == 0 :
-            print(f"\r{i:,d} / {rounds:,d}",end="",flush=True)
-    elapsed = time()-start
-    print()
-    print(f'used {elapsed:.2f} sec : gen {rounds:,d} screens')
+    while times > 0:
+        TotalBet += BET
 
-def gen_screen_printer(seed: int | None = None) :
-    gener = ScreenGenerator(seed=seed)
-    gener.gen_screen()
-    print(gener.view_rows_cols())
-    print(gener.as_symbol_names())
+        # 生成 3x5 盘面
+        LandingSymbols = []
+        for _row in range(3):
+            line = []
+            for col in range(5):
+                RandOdds = random.randint(1, 10000)
+                if RandOdds <= SymbolRateK[col]:
+                    line.append("K")
+                elif RandOdds <= SymbolRateK[col] + SymbolRateQ[col]:
+                    line.append("Q")
+                else:
+                    line.append("J")
+            LandingSymbols.append(line)
 
-if __name__ == "__main__" :
-    # runner()
-    gen_screen_printer()
+        # 中奖线配置（3 条水平线：上中下）
+        PayLine1Setting = [0, 0, 0, 0, 0]
+        PayLine2Setting = [1, 1, 1, 1, 1]
+        PayLine3Setting = [2, 2, 2, 2, 2]
+        PayLinesSetting = [PayLine1Setting, PayLine2Setting, PayLine3Setting]
 
+        # 根据中奖线配置，取出每条线上的实际符号
+        PayLines = []
+        for setting in PayLinesSetting:
+            line_symbols = []
+            for col, row_idx in enumerate(setting):
+                line_symbols.append(LandingSymbols[row_idx][col])
+            PayLines.append(line_symbols)
+
+        # 比较中奖线和中奖组合，结算赢钱数额
+        for sym_index, sym in enumerate(Symbols):
+            CombinationFive = [sym] * 5
+            CombinationFour = [sym] * 4
+            CombinationThree = [sym] * 3
+
+            for line in PayLines:
+                # 5 连
+                if line == CombinationFive:
+                    WIN += SymbolOdds[sym_index][0] * BET / len(PayLines)
+                # 4 连（从第 1 轮开始算）
+                elif line[:4] == CombinationFour:
+                    WIN += SymbolOdds[sym_index][1] * BET / len(PayLines)
+                # 3 连
+                elif line[:3] == CombinationThree:
+                    WIN += SymbolOdds[sym_index][2] * BET / len(PayLines)
+
+        times -= 1
+
+    RTP = WIN / TotalBet if TotalBet > 0 else 0
+    AllRTP.append(RTP)
+    print("RTP =", RTP)
+
+print("平均RTP, 方差, 标准差 = ",
+      np.mean(AllRTP),
+      np.var(AllRTP),
+      np.sqrt(np.var(AllRTP)))
