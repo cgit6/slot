@@ -155,10 +155,10 @@ class ScreenGenerator(SlotInit):
 
 
 # -------------------------------------------------
-# 判斷得分：ScreenViewer
+# 判斷得分：SpinCalculator
 # -------------------------------------------------
 
-class ScreenViewer(SlotInit):
+class SpinCalculator(SlotInit):
 
     def __init__(self):
         """
@@ -169,7 +169,7 @@ class ScreenViewer(SlotInit):
         self.TotalWins = 0                      # 總贏分（金額）
         self.win = 0                            # 單次贏分
         self.TotalBets = 0                      # 總下注
-        self.baseRtp = None                     # Base game RTP
+        self.baseRtp = 0                        # Base game RTP
         self.LineBuf = np.zeros((3, 5), dtype=np.uint8)
         self.transToLine: np.ndarray | None = None
         self.base_idx = np.arange(self.Cols, dtype=np.int64) * self.Rows  # 每一軸起始 index
@@ -181,6 +181,10 @@ class ScreenViewer(SlotInit):
         self.wild_name = "W1"
         matches = np.where(self.Symbols == self.wild_name)[0]
         self.wild_index = int(matches[0]) if matches.size > 0 else -1
+
+        # ---- C1 的 ID ----
+        c1_matches = np.where(self.Symbols == "C1")[0]
+        self.c1_index = int(c1_matches[0]) if c1_matches.size > 0 else -1
 
         # 不計分的符號：整列賠率都為 0 的 row
         zero_rows = np.all(self.PayTable == 0, axis=1)
@@ -212,7 +216,7 @@ class ScreenViewer(SlotInit):
 
     def hitCheck(self, line_values: np.ndarray) -> List[tuple[int, int, int]]:
         """
-        任務 2.2（整數版）:
+        任務 2.2:
         給定所有線上的符號索引（transToLine），判斷每條線是否中獎。
 
         Args:
@@ -295,8 +299,28 @@ class ScreenViewer(SlotInit):
 
         return results
     
-    def hitC1(self):
-        pass
+    def count_c1(self, screen: np.ndarray) -> int:
+        """
+        任務2.3 :
+        計算一個盤面中出現多少個 C1。
+
+        Args:
+            screen: 一維或二維 np.ndarray，元素為符號 ID
+                    - 一維: shape = (Rows*Cols,)
+                    - 二維: shape = (Rows, Cols)
+
+        Returns:
+            int: 盤面中 C1 的個數。
+        """
+        if self.c1_index == -1:
+            return 0  # 沒有 C1 這個符號就直接回 0
+
+        arr = np.asarray(screen)
+        if arr.ndim > 1:
+            arr = arr.ravel()  # 攤平成一維
+
+        return int(np.count_nonzero(arr == self.c1_index))
+
 
 
 
@@ -310,22 +334,24 @@ def runner(rounds: int = 1_000_000, seed: int | None = None):
     生成多組盤面並檢查每組盤面的分數。
     """
     gener = ScreenGenerator(seed=seed)
-    viewer = ScreenViewer()
+    Calc = SpinCalculator()
+
 
     print(f"running ScreenGenerator : gen {rounds:,d} screens")
     start = time()
 
     for i in range(1, rounds + 1):
         screen = gener.gen_screen()                   # 一維盤面
-        line_values = viewer.transPayLine(screen)     # 線上符號 ID 矩陣
-        hits = viewer.hitCheck(line_values)           # 每條線中獎結果
+        c1_count = Calc.count_c1(screen)            # 計算 C1 數量          
+        line_values = Calc.transPayLine(screen)     # 線上符號 ID 矩陣
+        hits = Calc.hitCheck(line_values)           # 每條線中獎結果
 
         # 計算這一 spin 的贏分（先用賠率 * Bet）
         spin_pay = sum(pay for (_, _, pay) in hits)
-        spin_win = spin_pay * viewer.Bet
+        spin_win = spin_pay * Calc.Bet
 
-        viewer.TotalWins += spin_win
-        viewer.TotalBets += viewer.Bet
+        Calc.TotalWins += spin_win # 更新贏分
+        Calc.TotalBets += Calc.Bet # 更新下注總分
 
         # 第一把印出細節看一下
         if i == 1:
@@ -341,7 +367,7 @@ def runner(rounds: int = 1_000_000, seed: int | None = None):
                 if cnt > 0:
                     print(
                         f"  line {idx + 1}: sym_id={sym_id}, "
-                        f"sym={viewer.Symbols[sym_id]}, "
+                        f"sym={Calc.Symbols[sym_id]}, "
                         f"cnt={cnt}, pay={pay}"
                     )
             print("--------------------------")
@@ -353,14 +379,14 @@ def runner(rounds: int = 1_000_000, seed: int | None = None):
     print()
     print(f"used {elapsed:.2f} sec : gen {rounds:,d} screens")
 
-    if viewer.TotalBets > 0:
-        viewer.baseRtp = viewer.TotalWins / viewer.TotalBets
+    if Calc.TotalBets > 0:
+        Calc.baseRtp = Calc.TotalWins / Calc.TotalBets
     else:
-        viewer.baseRtp = 0.0
+        Calc.baseRtp = 0.0
 
-    print(f"TotalBet = {viewer.TotalBets}")
-    print(f"TotalWin = {viewer.TotalWins}")
-    print(f"Base RTP = {viewer.baseRtp:.6f}")
+    print(f"TotalBet = {Calc.TotalBets}")
+    print(f"TotalWin = {Calc.TotalWins}")
+    print(f"Base RTP = {Calc.baseRtp:.6f}")
 
 
 def gen_screen_printer(seed: int | None = None):
