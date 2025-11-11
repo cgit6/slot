@@ -14,7 +14,8 @@ REELSTRIPS = [
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],  # 第五輪
 ]
 
-SYMBOLS = ["Z1", "C1", "W1", "H1", "H2", "H3", "H4", "L1", "L2", "L3", "L4", "L5"]  # 符號清單（index 0..11）
+SYMBOLS = ["Z1", "C1", "W1", "H1", "H2", "H3", "H4",
+           "L1", "L2", "L3", "L4", "L5"]  # 符號清單（index 0..11）
 
 # 線獎組合：每一條線是「列索引」組成的長度 5 陣列
 LINES = [
@@ -227,7 +228,7 @@ class SpinCalculator(SlotInit):
     def __init__(self, config: SlotConfig = DEFAULT_CONFIG) -> None:
         super().__init__(config=config)
 
-        self.TotalWins: int = 0
+        self.TotalWins: float = 0.0
         self.win: int = 0
         self.TotalBets: int = 0
         self.baseRtp: float = 0.0
@@ -377,7 +378,7 @@ def runner(rounds: int = 1_000_000, seed: Optional[int] = None) -> None:
         hits = calculator.hit_check(line_values)
 
         spin_pay = sum(pay for (_, _, pay) in hits)
-        spin_win = spin_pay * calculator.Bet
+        spin_win = spin_pay * calculator.Bet / 20  # 假設每線投注額為 Bet/20
 
         calculator.TotalWins += spin_win
         calculator.TotalBets += calculator.Bet
@@ -429,5 +430,5 @@ def gen_screen_printer(seed: Optional[int] = None) -> None:
 
 
 if __name__ == "__main__":
-    runner(rounds=1_000, seed=42)
+    runner(rounds=1_000_000, seed=42)
     # gen_screen_printer()

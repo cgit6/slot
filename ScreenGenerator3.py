@@ -2,6 +2,7 @@ from typing import Optional, List, Tuple
 from dataclasses import dataclass
 import numpy as np
 from time import time
+import math
 
 # -------------------------------------------------
 # 基本設定資料（這裡當作預設機台設定）
@@ -355,13 +356,6 @@ class SpinCalculator(SlotInit):
         針對「一條線」，用單一迴圈同時計算：
         - wildCount：開頭連續 Wild 的數量
         - symId / symCount：得分符號與其連線數（含 Wild 代替）
-
-        Args:
-            screen      : 一維盤面 (長度 = Rows*Cols, 元素為符號 ID)
-            linePattern : 此條線的 row pattern，如 [1,2,2,2,1]
-
-        Returns:
-            (winSymId, winCount, winPay)
         """
         wildCount    = 0
         wildContinue = True
@@ -435,19 +429,7 @@ class SpinCalculator(SlotInit):
 
     def calcScreen(self, screen: np.ndarray, lineBet: Optional[int] = None) -> ScreenResult:
         """
-        外部呼叫入口：
-
-        Args:
-            screen   : 一維盤面（長度 Rows * Cols，元素為符號 ID）
-            lineBet  : 單線下注金額（若為 None 則使用 self.Bet）
-
-        Returns:
-            ScreenResult 物件，包含：
-            - 原始盤面
-            - C1 出現次數
-            - 每條線的得分結果
-            - totalLinePay（賠率總和）
-            - totalWin（實際贏分 = totalLinePay * lineBet）
+        外部呼叫入口。
         """
         arr = np.asarray(screen, dtype=np.uint8)
         if arr.size != self.ScreenSize:
@@ -462,7 +444,7 @@ class SpinCalculator(SlotInit):
         lineResults: list[LineResult] = []
         totalLinePay = 0
 
-        # **重點**：不建立線表矩陣，逐條線直接用「單一迴圈」從 screen 計算
+        # 不建立線表矩陣，逐條線直接用「單一迴圈」從 screen 計算
         for lineIndex, linePattern in enumerate(self.lines):
             symId, count, pay = self._hitCheckLineSinglePass(arr, linePattern)
 
@@ -488,74 +470,223 @@ class SpinCalculator(SlotInit):
 
 
 # -------------------------------------------------
+# Game 物件：把 Generator + Calculator 包起來
+# -------------------------------------------------
+
+class SlotGame:
+    """
+    對外的「遊戲」物件，提供一個 Spin() 介面：
+        result = game.Spin()
+    """
+
+    def __init__(
+        self,
+        config: SlotConfig = DEFAULT_CONFIG,        # 機台靜態設定
+        seed: Optional[int] = None,                # 隨機種子
+        lineBet: int = 1000,                       # 單線下注
+    ) -> None:
+        self.Config = config
+        self.LineBet = lineBet
+        self.Generator = ScreenGenerator(seed=seed, config=config)
+        self.Calculator = SpinCalculator(config=config)
+        self.NumLines = self.Calculator.lines.shape[0]
+
+    def Spin(self) -> ScreenResult:
+        """
+        執行一次 spin：產生盤面 + 計算得分。
+        """
+        screen = self.Generator.genScreen()
+        result = self.Calculator.calcScreen(screen, lineBet=self.LineBet)
+        return result
+
+
+# -------------------------------------------------
+# Stat：統計物件（期望值、波動、標準差）
+# -------------------------------------------------
+
+class Stat:
+    """
+    負責統計模擬結果：
+    - 每一把的「回報率」 r_i = win_i / bet_i
+    - RTP = sum(win) / sum(bet) = 平均 r_i
+    - Std = r_i 的標準差
+    - CV  = Std / RTP
+    """
+
+    def __init__(self) -> None:
+        self.SpinCount: int = 0
+        self.TotalBet: float = 0.0
+        self.TotalWin: float = 0.0
+        self._sumReturn: float = 0.0      # sum(r_i)
+        self._sumReturnSq: float = 0.0    # sum(r_i^2)
+
+    def Record(self, spinWin: float, spinBet: float) -> None:
+        """
+        記錄一把的結果。
+        """
+        if spinBet <= 0:
+            return
+
+        r = spinWin / spinBet  # 單把回報率
+
+        self.SpinCount += 1
+        self.TotalBet += spinBet
+        self.TotalWin += spinWin
+        self._sumReturn += r
+        self._sumReturnSq += r * r
+
+    @property
+    def Rtp(self) -> float:
+        if self.TotalBet <= 0:
+            return 0.0
+        return self.TotalWin / self.TotalBet
+
+    @property
+    def MeanReturn(self) -> float:
+        if self.SpinCount == 0:
+            return 0.0
+        return self._sumReturn / self.SpinCount
+
+    @property
+    def Std(self) -> float:
+        """
+        回報率 r_i 的標準差（population std）。
+        """
+        n = self.SpinCount
+        if n == 0:
+            return 0.0
+        mean = self._sumReturn / n
+        meanSq = self._sumReturnSq / n
+        var = max(meanSq - mean * mean, 0.0)
+        return math.sqrt(var)
+
+    @property
+    def Cv(self) -> float:
+        """
+        變異係數 = Std / MeanReturn。
+        """
+        m = self.MeanReturn
+        if m == 0:
+            return 0.0
+        return self.Std / m
+
+
+# -------------------------------------------------
+# Simulator：模擬器物件
+# -------------------------------------------------
+
+class SlotSimulator:
+    """
+    負責跑多輪模擬：
+        result = game.Spin()
+        stat.Record(result.totalWin, totalBet)
+    """
+
+    def __init__(
+        self,
+        game: SlotGame,          # 遊戲物件
+        rounds: int,             # 模擬局數
+    ) -> None:
+        self.Game = game
+        self.Rounds = rounds
+
+    def Run(self, stat: Optional[Stat] = None, debugFirstSpin: bool = True) -> Stat:
+        """
+        執行模擬，回傳 Stat。
+        """
+        if stat is None:
+            stat = Stat()
+
+        numLines = self.Game.NumLines
+        lineBet = self.Game.LineBet
+
+        print(f"running simulator : spin {self.Rounds:,d} rounds")
+        start = time()
+
+        for i in range(1, self.Rounds + 1):
+            result = self.Game.Spin()
+            spinBet = lineBet * numLines
+            stat.Record(result.totalWin, spinBet)
+
+            if debugFirstSpin and i == 1:
+                self._debugFirstSpin(result)
+
+            if i % 100000 == 0:
+                print(f"\r{i:,d} / {self.Rounds:,d}", end="", flush=True)
+
+        elapsed = time() - start
+        print()
+        print(f"used {elapsed:.2f} sec : spin {self.Rounds:,d} rounds")
+
+        return stat
+
+    def _debugFirstSpin(self, result: ScreenResult) -> None:
+        """
+        第一把做詳細 debug 用。
+        """
+        game = self.Game
+        gen = game.Generator
+        calc = game.Calculator
+
+        print("---- First spin debug ----")
+        print("Screen (ID):")
+        print(gen.viewRowsCols())
+        print("Screen (Symbols):")
+        print(gen.asSymbolNames())
+        print("C1 count:", result.c1Count)
+
+        numLines = calc.lines.shape[0]
+        debugLines = np.empty((numLines, calc.Cols), dtype=np.uint8)
+        for li, linePattern in enumerate(calc.lines):
+            debugLines[li] = calc._getLineSymbols(result.screen, linePattern)
+
+        print("Line values (IDs):")
+        print(debugLines)
+        print("Hit results (line, sym, count, pay):")
+        for r in result.lineResults:
+            if r.count > 0 and r.symbolId >= 0:
+                print(
+                    f"  line {r.lineIndex + 1}: "
+                    f"symId={r.symbolId}, "
+                    f"sym={calc.Symbols[r.symbolId]}, "
+                    f"cnt={r.count}, pay={r.pay}"
+                )
+        print("--------------------------")
+
+
+# -------------------------------------------------
 # 測試 / 模擬執行
 # -------------------------------------------------
 
 def runner(rounds: int = 1_000_000, seed: Optional[int] = None) -> None:
     """
-    進行多輪模擬：
-    每一輪生成一個盤面、用 calcScreen 計算得分，最後統計 Base RTP。
+    高階入口：
+    - 建立 Game
+    - 建立 Simulator
+    - 建立 Stat
+    - 跑模擬後輸出 RTP / Std / CV
     """
     config = DEFAULT_CONFIG
-    generator = ScreenGenerator(seed=seed, config=config)
-    calculator = SpinCalculator(config=config)
 
-    numLines = calculator.lines.shape[0]
-    lineBet = calculator.Bet
+    game = SlotGame(
+        config=config,
+        seed=seed,
+        lineBet=1000,
+    )
 
-    print(f"running ScreenGenerator : gen {rounds:,d} screens")
-    start = time()
+    simulator = SlotSimulator(
+        game=game,
+        rounds=rounds,
+    )
 
-    for i in range(1, rounds + 1):
-        screen = generator.genScreen()
-        result = calculator.calcScreen(screen, lineBet=lineBet)
+    stat = Stat()
+    stat = simulator.Run(stat=stat, debugFirstSpin=True)
 
-        # 更新統計值
-        calculator.TotalWins += result.totalWin
-        calculator.TotalBets += lineBet * numLines
-
-        # 第一把做 debug 輸出
-        if i == 1:
-            print("---- First spin debug ----")
-            print("Screen (ID):")
-            print(generator.viewRowsCols())
-            print("Screen (Symbols):")
-            print(generator.asSymbolNames())
-            print("C1 count:", result.c1Count)
-
-            # 只為了 debug 暫時建立線表矩陣（不是計算必需）
-            debugLines = np.empty((numLines, calculator.Cols), dtype=np.uint8)
-            for li, linePattern in enumerate(calculator.lines):
-                debugLines[li] = calculator._getLineSymbols(screen, linePattern)
-
-            print("Line values (IDs):")
-            print(debugLines)
-            print("Hit results (line, sym, count, pay):")
-            for r in result.lineResults:
-                if r.count > 0:
-                    print(
-                        f"  line {r.lineIndex + 1}: "
-                        f"symId={r.symbolId}, "
-                        f"sym={calculator.Symbols[r.symbolId]}, "
-                        f"cnt={r.count}, pay={r.pay}"
-                    )
-            print("--------------------------")
-
-        if i % 100000 == 0:
-            print(f"\r{i:,d} / {rounds:,d}", end="", flush=True)
-
-    elapsed = time() - start
-    print()
-    print(f"used {elapsed:.2f} sec : gen {rounds:,d} screens")
-
-    if calculator.TotalBets > 0:
-        calculator.baseRtp = calculator.TotalWins / calculator.TotalBets
-    else:
-        calculator.baseRtp = 0.0
-
-    print(f"TotalBet = {calculator.TotalBets}")
-    print(f"TotalWin = {calculator.TotalWins}")
-    print(f"Base RTP = {calculator.baseRtp:.6f}")
+    print(f"TotalBet = {stat.TotalBet:.0f}")
+    print(f"TotalWin = {stat.TotalWin:.0f}")
+    print(f"RTP      = {stat.Rtp:.6f}")
+    print(f"Std(r)   = {stat.Std:.6f}")
+    print(f"CV       = {stat.Cv:.6f}")
 
 
 def genScreenPrinter(seed: Optional[int] = None) -> None:
@@ -569,5 +700,5 @@ def genScreenPrinter(seed: Optional[int] = None) -> None:
 
 
 if __name__ == "__main__":
-    runner(rounds=1_000_000)
+    runner(rounds=1_000_000, seed=42)
     # genScreenPrinter()
