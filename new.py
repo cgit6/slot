@@ -1,4 +1,4 @@
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Callable
 from dataclasses import dataclass
 import numpy as np
 from time import time
@@ -80,6 +80,7 @@ class SlotConfig:
         payTable: List[List[int]],     # 賠率表 (symbol x 1~5 連賠率)
         rows: int = 3,                 # 列數
         cols: int = 5,                 # 行數(輪數)
+        gameMode: str = "line",        # 遊戲模式: "line" 或 "ways"
     ) -> None:
         self.rows = rows
         self.cols = cols
@@ -93,12 +94,16 @@ class SlotConfig:
         self.lines: List[List[int]] = [list(line) for line in lines]
         self.payTable: List[List[int]] = [list(row) for row in payTable]
 
+        # 遊戲模式："line" / "ways"
+        self.gameMode: str = gameMode.lower()
+
 
 DEFAULT_CONFIG = SlotConfig(
     reelStrips=REELSTRIPS,
     symbols=SYMBOLS,
     lines=LINES,
     payTable=PAYTABLE,
+    gameMode="line",  # 預設 Line Game
 )
 
 
@@ -156,7 +161,7 @@ class SlotInit:
             if np.any((reel < 0) | (reel >= symLen)):
                 raise ValueError(f"第 {i} 條輪帶中有非法符號索引")
 
-        # 線獎陣列檢查
+        # 線獎陣列檢查（目前即使是 ways 模式，也先假設有 lines，之後可再拆）
         if self.lines.ndim != 2:
             raise ValueError("lines 必須是二維陣列 (num_lines, Cols)")
         if self.lines.shape[1] != self.Cols:
@@ -242,9 +247,9 @@ class ScreenResult:
     """
     screen: np.ndarray              # 盤面（一維 ID 陣列）
     c1Count: int                    # 盤面中 C1 出現次數
-    lineResults: list[LineResult]   # 每條線的結果
+    lineResults: list[LineResult]   # 每條線的結果（ways 模式可為空或另定意義）
     totalLinePay: int               # 各線賠率合計 (sum pay)
-    totalWin: int                   # 最終贏分（已乘 lineBet）
+    totalWin: int                   # 最終贏分（已乘 lineBet 或 totalBet）
 
 
 # -------------------------------------------------
@@ -257,6 +262,10 @@ class SpinCalculator(SlotInit):
 
     對外只暴露一個主要介面：
         calcScreen(screen, lineBet) -> ScreenResult
+
+    內部會依照 config.gameMode 決定：
+        - Line Game : 使用 _calcScreenLine
+        - Ways Game : 使用 _calcScreenWays
     """
 
     def __init__(
@@ -282,13 +291,21 @@ class SpinCalculator(SlotInit):
 
         # 不計分的符號：整列賠率都為 0 的 row
         zeroRows = np.all(self.PayTable == 0, axis=1)
-
         self.filterIds: set[int] = set(np.where(zeroRows)[0])
         # Wild 即使賠率為 0 也不要排除（因為還要當替身用）
         if self.wildIndex in self.filterIds:
             self.filterIds.remove(self.wildIndex)
 
-        # self.calcFn
+        # ---- 遊戲模式 & calcFn（Line / Ways 切換） ----
+        self.gameMode: str = self.Config.gameMode
+        self.calcFn: Callable[[np.ndarray, int], ScreenResult]
+
+        if self.gameMode == "line":
+            self.calcFn = self._calcScreenLine
+        elif self.gameMode == "ways":
+            self.calcFn = self._calcScreenWays
+        else:
+            raise ValueError(f"Unsupported gameMode: {self.gameMode!r}")
 
     # ---------- Debug 用：從一條線的 pattern 直接取得該線上的符號 ID ----------
 
@@ -348,7 +365,7 @@ class SpinCalculator(SlotInit):
         else:
             return self.wildIndex, wildCount, wildPay
 
-    # ---------- 單條線：單一迴圈計算 wild / sym 連線與賠率 ----------
+    # ---------- 單條線：單一迴圈計算 wild / sym 連線與賠率（Line Game 用） ----------
 
     def _hitCheckLineSinglePass(
         self,
@@ -428,28 +445,20 @@ class SpinCalculator(SlotInit):
 
         return int(np.count_nonzero(arr == self.c1Index))
 
-    # ---------- 對外主要介面：一次計算一個 screen ----------
+    # ---------- Line Game: 真正算分的實作 ----------
 
-    def calcScreen(self, screen: np.ndarray, lineBet: Optional[int] = None) -> ScreenResult:
+    def _calcScreenLine(self, screen: np.ndarray, lineBet: int) -> ScreenResult:
         """
-        外部呼叫入口。
+        Line Game 的算分流程：
+        - 找出每條線的中獎情況
+        - 加總賠率 * lineBet
         """
-        arr = np.asarray(screen, dtype=np.uint8)
-        if arr.size != self.ScreenSize:
-            raise ValueError(f"screen 長度應為 {self.ScreenSize}，實際為 {arr.size}")
-
-        if lineBet is None:
-            lineBet = self.Bet
-
-        # 統計 C1
-        c1Count = self._countC1(arr)
-
+        c1Count = self._countC1(screen)
         lineResults: list[LineResult] = []
         totalLinePay = 0
 
-        # 不建立線表矩陣，逐條線直接用「單一迴圈」從 screen 計算
         for lineIndex, linePattern in enumerate(self.lines):
-            symId, count, pay = self._hitCheckLineSinglePass(arr, linePattern)
+            symId, count, pay = self._hitCheckLineSinglePass(screen, linePattern)
 
             lineResults.append(
                 LineResult(
@@ -464,12 +473,50 @@ class SpinCalculator(SlotInit):
         totalWin = int(totalLinePay * lineBet)
 
         return ScreenResult(
-            screen=arr.copy(),
+            screen=screen.copy(),
             c1Count=c1Count,
             lineResults=lineResults,
             totalLinePay=totalLinePay,
             totalWin=totalWin,
         )
+
+    # ---------- Ways Game: 先放佔位函數，之後再實作 ----------
+
+    def _calcScreenWays(self, screen: np.ndarray, lineBet: int) -> ScreenResult:
+        """
+        Ways Game 的算分流程（佔位函數）：
+        之後要改成依照 ways 規則計算。
+
+        目前先：
+        - 只計算 C1 數量
+        - 回傳 totalWin = 0
+        """
+        c1Count = self._countC1(screen)
+        return ScreenResult(
+            screen=screen.copy(),
+            c1Count=c1Count,
+            lineResults=[],      # Ways 之後可以自訂資料結構或重用 LineResult
+            totalLinePay=0,
+            totalWin=0,
+        )
+
+    # ---------- 對外主要介面：一次計算一個 screen ----------
+
+    def calcScreen(self, screen: np.ndarray, lineBet: Optional[int] = None) -> ScreenResult:
+        """
+        外部呼叫入口。
+
+        內部會依照 self.calcFn (Line / Ways) 執行對應的算分流程。
+        """
+        arr = np.asarray(screen, dtype=np.uint8)
+        if arr.size != self.ScreenSize:
+            raise ValueError(f"screen 長度應為 {self.ScreenSize}，實際為 {arr.size}")
+
+        if lineBet is None:
+            lineBet = self.Bet
+
+        # 重要：這裡只呼叫 self.calcFn，不在意是 line 還是 ways
+        return self.calcFn(arr, lineBet)
 
 
 # -------------------------------------------------
@@ -486,13 +533,13 @@ class SlotGame:
         self,
         config: SlotConfig = DEFAULT_CONFIG,        # 機台靜態設定
         seed: Optional[int] = None,                # 隨機種子
-        lineBet: int = 1000,                       # 單線下注
+        lineBet: int = 1000,                       # 單線下注（ways 之後可換成 totalBet）
     ) -> None:
         self.Config = config
         self.LineBet = lineBet
         self.Generator = ScreenGenerator(seed=seed, config=config)
         self.Calculator = SpinCalculator(config=config)
-        self.NumLines = self.Calculator.lines.shape[0]
+        self.NumLines = self.Calculator.lines.shape[0]  # 目前 line 模式使用；ways 之後需調整
 
     def Spin(self) -> ScreenResult:
         """
@@ -669,7 +716,7 @@ def runner(rounds: int = 1_000_000, seed: Optional[int] = None) -> None:
     - 建立 Stat
     - 跑模擬後輸出 RTP / Std / CV
     """
-    config = DEFAULT_CONFIG
+    config = DEFAULT_CONFIG  # 目前是 line 模式，如要改 ways: SlotConfig(..., gameMode="ways")
 
     game = SlotGame(
         config=config,
